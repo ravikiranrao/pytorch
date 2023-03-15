@@ -164,7 +164,8 @@ def _has_potential_branch_input_mutation(branch, inputs):
     bit restrictive as the branch must be traceable.
     """
     try:
-        gm = make_fx(branch)(*inputs)
+        with disable_proxy_modes_tracing():
+            gm = make_fx(branch)(*inputs)
     except UnsupportedAliasMutationException:
         # this can happen when nested cond is
         # functionalized
@@ -192,7 +193,9 @@ def _has_potential_branch_input_alias(branch, inputs):
     bit restrictive as the branch must be traceable.
     """
     try:
-        gm = make_fx(branch)(*inputs)
+        with disable_proxy_modes_tracing():
+            gm = make_fx(branch)(*inputs)
+
     except UnsupportedAliasMutationException:
         # this can happen when nested cond is
         # functionalized
