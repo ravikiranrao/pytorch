@@ -178,58 +178,52 @@ def checkpoint(
 ):
     r"""Checkpoint a model or part of the model
 
-    Checkpointing works by trading compute for memory. Rather than storing all
-    intermediate activations of the entire computation graph for computing
-    backward, the checkpointed part does **not** save intermediate activations,
-    and instead recomputes them in backward pass. It can be applied on any part
-    of a model.
+    Checkpointing is a technique that trades compute for memory. Instead of
+    storing all intermediate activations of the entire computation graph for
+    the backward pass, the checkpointed part omits saving intermediate
+    activations and recomputes them during the backward pass. This can be
+    applied to any part of a model.
 
-    Specifically, in the forward pass, :attr:`function` will run in
-    :func:`torch.no_grad` manner, i.e., not storing the intermediate
-    activations. Instead, the forward pass saves the inputs tuple and the
-    :attr:`function` parameter. In the backwards pass, the saved inputs and
-    :attr:`function` is retrieved, and the forward pass is computed on
-    :attr:`function` again, now tracking the intermediate activations, and then
-    the gradients are calculated using these activation values.
+    There are currently two checkpointing implementations available, determined
+    by the :attr:`use_reentrant` parameter. In the future, we plan to deprecate
+    ``use_reentrant=True`` (reentrant variant). so it is recommended that you
+    use ``use_reentrant=False`` (non-reentrant variant). If you have a use case
+    that requires the reentrant variant, please file an issue.
 
-    The output of :attr:`function` can contain non-Tensor values and gradient
-    recording is only performed for the Tensor values. Note that if the output
-    consists of nested structures (ex: custom objects, lists, dicts etc.)
-    consisting of Tensors, these Tensors nested in custom structures will not
-    be considered as part of autograd.
+    The non-reentrant variant offers several improvements over the reentrant
+    variant:
 
+    * Properly records the autograd graph during the forward pass, allowing for
+      more fine-grained control, such as performing backward on the graph within
+      checkpointed regions and attaching hooks. The reentrant variant runs the
+      forward in :func:`torch.no_grad`.
 
-    .. warning::
-        If :attr:`function` invocation during backward does anything different
-        than the one during forward, e.g., due to some global variable, the
-        checkpointed version won't be equivalent, and unfortunately it can't be
-        detected.
+    * Supports all ways of performing the backward pass, whereas reentrant
+      checkpoint only supports the :func:`torch.autograd.backward` API and only
+      if its `inputs` argument is not passed. Reentrant checkpoint does not
+      support :func:`torch.autograd.grad`.
 
-    .. warning::
-        If ``use_reentrant=True`` is specified, then if the checkpointed segment
-        contains tensors detached from the computational graph by `detach()` or
-        `torch.no_grad()`, the backward pass will raise an error. This is
-        because `checkpoint` makes all the outputs require gradients which
-        causes issues when a tensor is defined to have no gradient in the model.
-        To circumvent this, detach the tensors outside of the `checkpoint`
-        function. Note that the checkpointed segment can contain tensors
-        detached from the computational graph if ``use_reentrant=False`` is
-        specified.
+    * No requirement for at least one input and output to have
+      ``requires_grad=True``. If this condition is unmet in the reentrant
+      checkpoint, the checkpointed part of the model will not have gradients.
 
-    .. warning::
-        If ``use_reentrant=True`` is specified, at least one of the inputs needs
-        to have :code:`requires_grad=True` if grads are needed for model inputs,
-        otherwise the checkpointed part of the model won't have gradients. At
-        least one of the outputs needs to have :code:`requires_grad=True` as
-        well. Note that this does not apply if ``use_reentrant=False`` is
-        specified.
+    * Considers tensors passed as inputs or returned as outputs in nested
+      structures (e.g., custom objects, lists, dicts, etc) as participating in
+      autograd.
+
+    * Supports checkpointed regions containing tensors detached from the
+      computational graph. For the reentrant variant, if the checkpointed
+      segment contains tensors detached using ``detach()`` or with
+      :func:`torch.no_grad`, the backward pass will raise an error. This is
+      because ``checkpoint`` makes all the outputs require gradients and this
+      causes issues when a tensor is defined to have no gradient in the model.
+      To avoid this, detach the tensors outside of the ``checkpoint`` function.
 
     .. warning::
-        If ``use_reentrant=True`` is specified, checkpointing currently only
-        supports :func:`torch.autograd.backward` and only if its `inputs`
-        argument is not passed. :func:`torch.autograd.grad`
-        is not supported. If ``use_reentrant=False`` is specified, checkpointing
-        will work with :func:`torch.autograd.grad`.
+        If the :attr:`function` invocation during the backward pass differs
+        from the forward pass, e.g., due to a global variable, the checkpointed
+        checkpointed version may not be equivalent, potentially causing an
+        error being raised or leading to silently incorrect gradients.
 
     Args:
         function: describes what to run in the forward pass of the model or
@@ -282,22 +276,16 @@ def checkpoint_sequential(functions, segments, input, use_reentrant=True, **kwar
 
     Sequential models execute a list of modules/functions in order
     (sequentially). Therefore, we can divide such a model in various segments
-    and checkpoint each segment. All segments except the last will run in
-    :func:`torch.no_grad` manner, i.e., not storing the intermediate
-    activations. The inputs of each checkpointed segment will be saved for
-    re-running the segment in the backward pass.
-
-    See :func:`~torch.utils.checkpoint.checkpoint` on how checkpointing works.
+    and checkpoint each segment. All segments except the last will not store
+    the intermediate  activations. The inputs of each checkpointed segment will
+    be saved for re-running the segment in the backward pass.
 
     .. warning::
-        Checkpointing currently only supports :func:`torch.autograd.backward`
-        and only if its `inputs` argument is not passed. :func:`torch.autograd.grad`
-        is not supported.
-
-    .. warning:
-        At least one of the inputs needs to have :code:`requires_grad=True` if
-        grads are needed for model inputs, otherwise the checkpointed part of the
-        model won't have gradients.
+        If you are using the ``use_reentrant=True` implementation (this is the
+        default), please see :func:`~torch.utils.checkpoint.checkpoint` to see
+        the restrictions of this variant. It is recommended that you pass
+        ``use_reentrant=False``. We plan to deprecate ``use_reentrant=True`` in
+        a future version of PyTorch.
 
     .. warning:
         Since PyTorch 1.4, it allows only one Tensor as the input and
@@ -481,16 +469,16 @@ def checkpoint_sequential(functions, segments, input, use_reentrant=True, **kwar
 # out = checkpoint(fn)(inp)
 #
 # In the code above fn is computed (potentially partially) 4 times in total.
-#   1. Don't save x and y since we are inside a checkpoint.
-#   2. Trigger a recompute of fn as we reach (3) since x and y weren't saved.
-#   3. If early stop is enabled, stop at (2)
-#   4. Continue original forward at (4), not saving x and w.
-#   5. (5) triggers a recompute of fn
-#   6. During recompute, we see that in the original graph, gx has already
-#      cleared x and y since backward is run at (3) without retain_graph=True
-#      We save x and w, however.
-#   7. Continue with returning
 #
+# 1. Don't save x and y since we are inside a checkpoint.
+# 2. Trigger a recompute of fn as we reach (3) since x and y weren't saved.
+# 3. If early stop is enabled, stop at (2)
+# 4. Continue original forward at (4), not saving x and w.
+# 5. (5) triggers a recompute of fn
+# 6. During recompute, we see that in the original graph, gx has already
+#    cleared x and y since backward is run at (3) without retain_graph=True
+#    We save x and w, however.
+# 7. Continue with returning
 
 # NB: This is temporary and should be removed in a follow up PR. Early stopping
 #     is currently disabled by default. Since some nested test cases require
