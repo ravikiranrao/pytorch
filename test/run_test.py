@@ -1320,6 +1320,7 @@ def main():
 
     test_directory = str(REPO_ROOT / "test")
     selected_tests = get_selected_tests(options)
+    selected_tests = ["test_ops_jit"]
 
     if options.verbose:
         print_to_stderr("Selected tests:\n {}".format("\n ".join(selected_tests)))

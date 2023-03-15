@@ -866,7 +866,7 @@ def is_avx512_vnni_supported():
 
 IS_AVX512_VNNI_SUPPORTED = is_avx512_vnni_supported()
 
-if IS_WINDOWS:
+if False:
     @contextmanager
     def TemporaryFileName(*args, **kwargs):
         # Ideally we would like to not have to manually delete the file, but NamedTemporaryFile
