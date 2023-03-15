@@ -268,11 +268,12 @@ def proxy_call(proxy_mode, func, args, kwargs):
             shape = args[0]
             new_seed, new_offset = PhiloxRandomState.get_seed_offset(shape)
             TO_BE_REMOVED_tensor_to_make_inductor_api_happy = torch.empty(args[0], device=kwargs["device"])
-            r = philox_rand_like(TO_BE_REMOVED_tensor_to_make_inductor_api_happy, torch.tensor(new_seed, dtype=torch.int32), new_offset)
+            # r = philox_rand_like(TO_BE_REMOVED_tensor_to_make_inductor_api_happy, torch.tensor(new_seed, dtype=torch.int32), new_offset)
+            r = philox_rand_like(TO_BE_REMOVED_tensor_to_make_inductor_api_happy, new_seed, new_offset)
             return r
         elif func in [aten.rand_like.default]:
             new_seed, new_offset = PhiloxRandomState.get_seed_offset(args[0].shape)
-            r = philox_rand_like(args[0], torch.tensor(new_seed, dtype=torch.int32), new_offset)
+            r = philox_rand_like(args[0], new_seed, new_offset)
             return r
 
     tracer = proxy_mode.tracer
@@ -772,6 +773,8 @@ def make_fx(f, decomposition_table=None, tracing_mode="real", _allow_non_fake_in
 
         arg_count = 0
 
+        # HACK - So that we can compile through torch.set_rng_state
+        fake_tensor_mode: Any = nullcontext()
         def wrap_fake(x):
             nonlocal arg_count
             if isinstance(x, torch.Tensor):

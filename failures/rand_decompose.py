@@ -2,6 +2,7 @@ import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 import functorch
 from functorch.compile import aot_function, aot_module, draw_graph, print_compile
+import torch.utils.checkpoint
 
 # aten = torch.ops.aten
 # class FunctionalizeRandomOps(TorchDispatchMode):
@@ -117,28 +118,38 @@ from functorch.compile import aot_function, aot_module, draw_graph, print_compil
 # with HelloContextManager(), HelloContextManager2():
 #     print("AAA")
 
+@torch._dynamo.allow_in_graph
 class MockModule(torch.nn.Module):
     def __init__(self):
         super().__init__()
     
-    def forward(self, x):
-        a = torch.rand(1024, device="cuda") + torch.sin(x)
-        a = torch.rand(4, 1024, device="cuda").sum(axis=0) + torch.sin(a)
-        a = torch.rand(1024, device="cuda") + torch.sin(a)
+    def forward_impl_(self, x):
+        a = torch.rand(4, device="cuda") + torch.sin(x)
+        a = torch.rand(4, 4, device="cuda").sum(axis=0) + torch.sin(a)
+        a = torch.rand(4, device="cuda") + torch.sin(a)
         a = torch.nn.functional.dropout(a)
         return a
 
+    def forward(self, x):
+        return torch.utils.checkpoint.checkpoint(self.forward_impl_, x, use_reentrant=False, preserve_rng_state=True)
+
 mod = MockModule()
 
-x = torch.randn(1024, device="cuda", requires_grad=True)
+
+def fn(x):
+    a = torch.sigmoid(x)
+    a = mod(x)
+    return a
+
+x = torch.randn(4, device="cuda", requires_grad=True)
 
 # with FunctionalizeRandomOps():
 #     z = mod(x)
 #     print(z)
 
 
-# aot_mod = aot_module(mod, print_compile)
-# aot_mod(x)
+aot_mod = aot_function(fn, print_compile)
+aot_mod(x).sum().backward()
 
-opt_mod = torch.compile(mod, backend="aot_eager_decomp_partition")
-opt_mod(x).sum().backward()
+# opt_mod = torch.compile(fn, backend="aot_eager_decomp_partition")
+# opt_mod(x).sum().backward()
