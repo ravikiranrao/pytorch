@@ -1278,13 +1278,24 @@ void SimpleIREvaluator::bindArg(const BufferArg& bufArg, void* data) {
   }
 
   switch (bufArg.dtype().scalar_type()) {
-#define TYPE_CASE(Type, Name)                 \
-  case ScalarType::Name: {                    \
-    Type typed_data;                          \
-    memcpy(&typed_data, data, sizeof(Type));  \
-    impl_->bindVar(bufArg.var(), typed_data); \
-    break;                                    \
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define TYPE_CASE(Type, Name)                                                          \
+  case ScalarType::Name: {                                                             \
+    Type typed_data;                                                                   \
+    memcpy(&typed_data, data, sizeof(Type));                                           \
+    impl_->bindVar(bufArg.var(), typed_data);                                          \
+    break;                                                                             \
   }
+#else /* __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ */
+#define TYPE_CASE(Type, Name)                                                          \
+  case ScalarType::Name: {                                                             \
+    Type typed_data;                                                                   \
+    size_t idx = (sizeof(Type) >= sizeof(void*)) ? 0 : (sizeof(void*) - sizeof(Type)); \
+    memcpy(&typed_data, ((const char*)data) + idx, sizeof(Type));                      \
+    impl_->bindVar(bufArg.var(), typed_data);                                          \
+    break;                                                                             \
+  }
+#endif /* __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ */
     AT_FORALL_SCALAR_TYPES_AND3(Bool, Half, BFloat16, TYPE_CASE);
 #undef TYPE_CASE
     default:
