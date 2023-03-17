@@ -1,7 +1,5 @@
-import torch.distributed._shard.sharded_tensor._ops.chunk
 import torch.distributed._shard.sharded_tensor._ops.tensor_ops
 
-from .binary_cmp import equal, allclose
 from .init import kaiming_uniform_, normal_, uniform_, constant_
 
 # Import all ChunkShardingSpec ops
